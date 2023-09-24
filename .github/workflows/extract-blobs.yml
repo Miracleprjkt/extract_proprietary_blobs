@@ -30,11 +30,11 @@ on:
       USER_NAME:
         description: 'Name in Github Account'
         required: true
-        default: 'Carlo Dee'
+        default: 'Miraclev1'
       USER_EMAIL:
         description: 'E-mail in Github Account'
         required: true
-        default: 'carlodee.official@proton.me'
+        default: 'fathiralmsyah3@gmail.com'
 
 jobs:
   build:
