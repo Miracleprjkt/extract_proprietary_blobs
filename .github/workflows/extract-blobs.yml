@@ -23,10 +23,6 @@ on:
         description: 'Device Codename'
         required: true
         default: ''
-      DEVICE_VENDORNAME:
-        description: 'Device Vendor Name'
-        required: true
-        default: ''
       USER_NAME:
         description: 'Name in Github Account'
         required: true
@@ -48,7 +44,6 @@ jobs:
       DTR: ${{ github.event.inputs.DEVICE_TREE_REPO }}
       DTB: ${{ github.event.inputs.DEVICE_TREE_BRANCH }}
       DCN: ${{ github.event.inputs.DEVICE_CODENAME }}
-      DVN: ${{ github.event.inputs.DEVICE_VENDORNAME }}
       UN: ${{ github.event.inputs.USER_NAME }}
       UEM: ${{ github.event.inputs.USER_EMAIL }}
       TR: android_vendor_${{ github.event.inputs.DEVICE_VENDORNAME }}_${{ github.event.inputs.DEVICE_CODENAME }}
@@ -85,7 +80,7 @@ jobs:
     - name: Clone Device Tree
       run: |
         cd workspace
-        git clone --depth=1 ${{ env.DTR }} -b ${{ env.DTB }} ./android/device/${{ env.DVN }}/${{ env.DCN }}
+        git clone --depth=1 ${{ env.DTR }} -b ${{ env.DTB }} ./android/device/${{ env.DCN }}
 
     - name: Clone LineageOS Tools and Utils
       run: |
@@ -98,15 +93,15 @@ jobs:
     - name: Extracting Files from Dump
       run: |
         cd workspace
-        chmod a+x android/device/${{ env.DVN }}/${{ env.DCN }}/setup-makefiles.sh
-        cd android/device/${{ env.DVN }}/${{ env.DCN }}/
+        chmod a+x android/device/${{ env.DCN }}/setup-makefiles.sh
+        cd android/device/${{ env.DCN }}/
         bash extract-files.sh ${GITHUB_WORKSPACE}/workspace/firmware-dump/
         echo "Done extracting and making files."
         echo "Pushing as repository now."
         
     - name: Push to Github as Repository
       run: |
-        cd workspace/android/vendor/${{ env.DVN }}/${{ env.DCN }}
+        cd workspace/android/vendor/${{ env.DCN }}
         git init
         git branch -M main-${{ env.DCN }}
         git add .
