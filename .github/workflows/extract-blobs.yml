@@ -98,9 +98,9 @@ jobs:
     - name: Extracting Files from Dump
       run: |
         cd workspace
-        chmod a+x android/device/${{ env.DVN }}/${{ env.DCN }}/setup-makefiles.sh
+        chmod a+x android/device/${{ env.DVN }}/${{ env.DCN }}/setup-makefiles.py
         cd android/device/${{ env.DVN }}/${{ env.DCN }}/
-        bash extract-files.sh ${GITHUB_WORKSPACE}/workspace/firmware-dump/
+        bash extract-files.py ${GITHUB_WORKSPACE}/workspace/firmware-dump/
         echo "Done extracting and making files."
         echo "Pushing as repository now."
         
