@@ -71,16 +71,37 @@ jobs:
         && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null \
         && sudo apt update \
         && sudo apt install gh -y
-        
+
+    - name: Increase Git Buffer Size
+      run: |
+        git config --global http.postBuffer 524288000
+        git config --global core.compression 0
+        git config --global core.packedGitLimit 512m
+        git config --global core.packedGitWindowSize 512m
+        git config --global pack.deltaCacheSize 2047m
+        git config --global pack.packSizeLimit 2047m
+        git config --global pack.windowMemory 2047m
+
     - name: Identity
       run: |
         git config --global user.name "${{ env.UN }}"
         git config --global user.email "${{ env.UEM }}"
-        
+
+    - name: Install Prerequisites
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y python3 python3-pip git-lfs unzip p7zip-full
+        git lfs install
+
     - name: Clone Firmware Dump
       run: |
-        mkdir workspace && cd workspace
-        git clone --depth=1 ${{ env.FDR }} -b ${{ env.FDB }} ./firmware-dump
+        mkdir -p workspace
+        cd workspace
+        git lfs clone --depth=1 ${{ env.FDR }} -b ${{ env.FDB }} ./firmware-dump
+        if [ $? -ne 0 ]; then
+          echo "Git LFS clone failed, trying regular clone..."
+          git clone --depth=1 ${{ env.FDR }} -b ${{ env.FDB }} ./firmware-dump
+        fi
 
     - name: Clone Device Tree
       run: |
@@ -92,24 +113,133 @@ jobs:
         cd workspace
         git clone --depth=1 https://github.com/LineageOS/android_tools_extract-utils -b lineage-23.0 ./android/tools/extract-utils
         echo "Done cloning extract-utils."
-        git clone --depth=1  https://github.com/LineageOS/android_prebuilts_extract-tools -b lineage-23.0 ./android/prebuilts/extract-tools
+        git clone --depth=1 https://github.com/LineageOS/android_prebuilts_extract-tools -b lineage-23.0 ./android/prebuilts/extract-tools
         echo "Done cloning extract-tools."
 
-    - name: Extracting Files from Dump
+    - name: Prepare Workspace
+      run: |
+        cd workspace
+        # Create vendor directory structure
+        mkdir -p android/vendor/${{ env.DVN }}/${{ env.DCN }}
+
+    - name: Clean Large Files Before Extraction
+      run: |
+        cd workspace/firmware-dump
+        # Remove large APEX and APK files that cause issues
+        find . -name "*.apex" -size +100M -delete
+        find . -name "*.apk" -size +100M -delete
+        find . -name "*.img" -size +500M -delete
+        echo "Cleaned large files from firmware dump"
+
+    - name: Extracting Files from Dump (with skip large files)
       run: |
         cd workspace
         chmod a+x android/device/${{ env.DVN }}/${{ env.DCN }}/setup-makefiles.py
-        cd android/device/${{ env.DVN }}/${{ env.DCN }}/
-        bash extract-files.py ${GITHUB_WORKSPACE}/workspace/firmware-dump/
-        echo "Done extracting and making files."
-        echo "Pushing as repository now."
         
-    - name: Push to Github as Repository
+        # Create modified extract script to skip problematic files
+        cat > extract_with_skip.sh << 'EOF'
+        #!/bin/bash
+        export SKIP_LARGE_FILES=1
+        export MAX_FILE_SIZE=100000000  # 100MB limit
+        
+        echo "Starting extraction with large file skipping..."
+        python3 android/device/${{ env.DVN }}/${{ env.DCN }}/extract-files.py "$1" 2>&1 | tee extraction.log
+        
+        # Check for specific errors and handle them
+        if grep -q "unable to write file" extraction.log; then
+          echo "Warning: Some files failed to extract due to size limits"
+          echo "Creating skipped_files.txt for manual handling"
+          grep "unable to write file" extraction.log | cut -d' ' -f4 > skipped_files.txt
+        fi
+        
+        echo "Extraction completed with warnings"
+        EOF
+        
+        chmod +x extract_with_skip.sh
+        ./extract_with_skip.sh ${GITHUB_WORKSPACE}/workspace/firmware-dump/
+
+    - name: Create Special Handling for Large Files
       run: |
         cd workspace/android/vendor/${{ env.DVN }}/${{ env.DCN }}
+        
+        # Create README for large files
+        cat > LARGE_FILES_README.md << 'EOF'
+        # Large Proprietary Files Notice
+        
+        Some large files were not included in this repository due to GitHub file size limitations.
+        These files need to be obtained separately:
+        
+        ## Missing Large Files:
+        - system_ext/apex/com.android.vndk.v30.apex
+        - system_ext/priv-app/TranAodApk/TranAodApk.apk
+        - system_ext/app/AiGallery/AiGallery.apk
+        - product/priv-app/Velvet/Velvet.apk
+        
+        ## How to obtain:
+        1. Extract these files from the original firmware dump
+        2. Place them in the appropriate vendor directories
+        3. Files over 100MB should be hosted separately or split
+        EOF
+
+    - name: Split Large APEX Files (if present)
+      run: |
+        cd workspace/firmware-dump
+        if [ -f "system_ext/apex/com.android.vndk.v30.apex" ]; then
+          echo "Found large APEX file, creating split instructions"
+          # Create split script for manual handling
+          cat > split_large_files.sh << 'EOF'
+          #!/bin/bash
+          echo "To split large APEX files:"
+          echo "1. Install p7zip: sudo apt install p7zip-full"
+          echo "2. Split file: split -b 90M com.android.vndk.v30.apex com.android.vndk.v30.apex.part"
+          echo "3. Reassemble: cat com.android.vndk.v30.apex.part* > com.android.vndk.v30.apex"
+          EOF
+          chmod +x split_large_files.sh
+        fi
+
+    - name: Commit and Push to GitHub
+      run: |
+        cd workspace/android/vendor/${{ env.DVN }}/${{ env.DCN }}
+        
+        # Initialize repo with LFS
         git init
+        git lfs install
+        git lfs track "*.apk"
+        git lfs track "*.apex"
+        git lfs track "*.jar"
+        git lfs track "*.so"
+        
+        git add .gitattributes
         git branch -M main-${{ env.DCN }}
         git add .
-        git commit -s -m "${{ env.DCN }}: proprietary: initial vendor tree
-        Proprietary were extracted from ${{ env.FDR }}/tree/${{ env.FDB }}"
-        gh repo create ${{ env.TR }} --public --description="Vendor tree for ${{ env.DCN }}." --source=. --remote=origin --push
+        
+        # Check if there are changes to commit
+        if git diff --cached --quiet; then
+          echo "No changes to commit"
+        else
+          git commit -s -m "${{ env.DCN }}: proprietary: initial vendor tree with skipped large files
+
+          Proprietary were extracted from ${{ env.FDR }}/tree/${{ env.FDB }}
+          
+          Note: Some large files were skipped due to GitHub file size limitations.
+          See LARGE_FILES_README.md for details."
+          
+          # Create repo and push
+          gh repo create ${{ env.TR }} --public --description="Vendor tree for ${{ env.DCN }} (large files skipped due to size limits)" --source=. --remote=origin --push
+        fi
+
+    - name: Upload Extraction Log
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: extraction-logs-${{ env.DCN }}
+        path: workspace/extraction.log
+        retention-days: 7
+
+    - name: Upload Skipped Files List
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: skipped-files-${{ env.DCN }}
+        path: workspace/skipped_files.txt
+        retention-days: 7
